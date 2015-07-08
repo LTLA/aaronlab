@@ -441,7 +441,7 @@ plotTracks(c(gax, collected), from=start(cur.region), to=end(cur.region))
 - How do we adjust the annotation parameters?
 ```{r}
 anno2 <- detailRanges(clustered$regions, orgdb=org.Mm.eg.db,
-  txdb=TxDb.Mmusculus.USCS.mm10.knownGene, dist=3000, promoter=c(0, 2000))
+  txdb=TxDb.Mmusculus.UCSC.mm10.knownGene, dist=3000, promoter=c(0, 2000))
 ```
 - Do we see strand bimodality in the resulting coverage profiles? What are the top hits that don't exhibit any bimodality?
 
