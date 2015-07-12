@@ -4,6 +4,11 @@
 %\VignetteEngine{knitr::knitr}
 -->
 
+```{r, echo=FALSE, results="hide"}
+library(knitr)
+opts_chunk$set(error=FALSE)
+```
+
 ```{r style, echo=FALSE, results='asis'}
 BiocStyle::markdown()
 ```
