@@ -70,7 +70,7 @@ bam.files <- file.path("/home/ubuntu/data/aaronlun",
     c("es_1.bam", "es_2.bam", "tn_1.bam", "tn_2.bam"))
 ```
 
-These are BAM files, so we've already mapped the reads to the mm10 genome.
+These are BAM files, so we've already mapped the reads to the *mm10* build of the mouse genome.
 For those who are interested, this was done using [subread](http://dx.doi.org/10.1093/nar/gkt214), with some help from SAMtools and Picard.
 The full processing pipeline can be found at the location below.
 
@@ -82,11 +82,12 @@ system.file("doc", "sra2bam.sh", package="csaw")
 
 The first step is to count reads into windows.
 Reads are directionally extended to the average fragment length, to represent the original fragments that were present during immunoprecipitation.
-Windows of constant size are tiled across the genome at regular intervals.
+Windows of constant size (10 bp) are tiled across the genome at regular intervals (50 bp).
 
 ```{r}
 frag.len <- 110
 window.width <- 10
+spacing <- 50
 ```
 
 The number of imputed fragments overlapping each window is then counted in each library.
@@ -95,7 +96,7 @@ We filter out low-quality alignments (mapping quality score less than 50) and we
 
 ```{r}
 param <- readParam(minq=50, restrict=paste0('chr', c(1:19, 'X', 'Y')))
-data <- windowCounts(bam.files, ext=frag.len, width=window.width, param=param)
+data <- windowCounts(bam.files, ext=frag.len, width=window.width, spacing=spacing, param=param)
 data
 ```
 
@@ -135,15 +136,15 @@ param
 # Computing normalization factors
 
 There's several different normalization options in `r Biocpkg("csaw")`, but we'll just focus on removing composition bias.
-This is introduced when DB regions take up a bigger slice of the sequencing pie in one library, suppressing the coverage of everything else like background regions.
+This is introduced when DB regions take up a bigger slice of the sequencing pie in one library, suppressing the coverage of everything else (e.g., non-DB sites, background regions).
 We don't want to detect differences due to this suppression, so we normalize based on the assumption that most of the genome is non-DB background.
-First, we count reads into large bins to quantify the coverage of the background regions.
+First, we count reads into large 10 kbp bins to quantify the coverage of the background regions.
 
 ```{r}
 binned <- windowCounts(bam.files, bin=TRUE, width=10000, param=param)
 ```
 
-Any differences between libraries across these background bins must be artifactual, and scaling is performed to eliminate them.
+Any systematic difference between libraries across these background bins must be artifactual and should be eliminated by scaling normalization.
 The `normalize` function is a S4 method that wraps the `normalizeCounts` function, which in turn wraps the `calcNormFactors` function from the `r Biocpkg("edgeR")` package.
 The actual normalization is performed using the [trimmed mean of M-values (TMM) method](http://dx.doi.org/10.1186/gb-2010-11-3-r25).
 
@@ -155,6 +156,7 @@ normfacs
 We can have a look at these factors on MA plots. 
 The code below compares the binned counts for libraries 1 and 2, i.e., the two ES replicates.
 Note the big blob, which corresponds mostly to the background regions of the genome.
+The location of the red line represents the log-scaling factor used to normalize one library against the other.
 
 ```{r}
 adj.counts <- cpm(asDGEList(binned), log=TRUE)
@@ -218,7 +220,7 @@ nrow(data)
 ```
 
 A very large number of low-abundance windows is problematic as they will mess up some of `r Biocpkg("edgeR")`'s statistical methods and assumptions.
-Filtering gets rid of most of them, while also reducing computational work and the severity of the multiple testing correction.
+Filtering gets rid of most of these windows and their associated problems, while also reducing computational work and the severity of the multiple testing correction.
 
 ## Interesting questions
 
@@ -242,7 +244,7 @@ wider <- regionCounts(bam.files, regions=neighbour, ext=frag.len, param=param)
 ```
 
 We then use the `filterWindows` function to process these into enrichment values, for each window over its local background.
-We keep those windows that have a 3-fold or higher increase in abundance.
+We keep those windows that have a 3-fold or higher increase in abundance over its neighbours.
 
 ```{r}
 filter.stat.loc <- filterWindows(original, wider, type="local")
@@ -254,6 +256,7 @@ summary(local.keep)
 
 We first define the experimental design.
 This is fairly easy for our set-up, which contains two groups of two biological replicates.
+More complex designs can also be accommodated.
 
 ```{r}
 grouping <- factor(c('es', 'es', 'tn', 'tn'))
@@ -272,7 +275,7 @@ y <- estimateDisp(y, design)
 
 We can augment this model with [quasi-likelihood (QL) methods](http://dx.doi.org/10.1515/1544-6115.1826).
 The QL dispersions account for window-specific variability, while the NB dispersions model biological variability between replicates.
-We fit a generalized linear model (GLM) with estimates for the QL dispersions. 
+We fit a generalized linear model (GLM) to the counts for each window, where the QL dispersion for that window is estimated from the GLM deviance.
 
 ```{r}
 fit <- glmQLFit(y, design, robust=TRUE)
@@ -339,7 +342,7 @@ clustered$region
 
 We can combine *p*-values for all windows in each cluster using Simes' method.
 This computes a single combined *p*-value for each cluster/region, representing the evidence against the global null.
-We also get some other statistics, like the total number of windows in each cluster as well as the number that are changing in each direction.
+We also get some other statistics, like the total number of windows in each cluster as well as the number that are changing substantially in each direction.
 
 ```{r}
 tabcom <- combineTests(clustered$id, results$table)
@@ -347,7 +350,7 @@ head(tabcom)
 ```
 
 Each row of the output table corresponds to a cluster/region. 
-Controlling the FDR across regions is simple, as we can just apply the correction on the combined *p*-values.
+Controlling the FDR across regions is simple, as we can just apply the Benjamini-Hochberg correction on the combined *p*-values.
 
 ## Interesting questions
 
@@ -363,8 +366,8 @@ head(tab.best)
 
 ## Advanced usage
 
-We can use a whole lot of different clustering strategies. 
-One that is particularly popular is to cluster windows according to the promoters in which they are assigned.
+We can use many different clustering strategies, so long as they are blind to the DB status of the windows. 
+One strategy that is particularly useful is to cluster windows according to the promoters in which they are located.
 This allows for direct coordination with, say, a differential expression analysis.
 
 ```{r}
